@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot } from 'firebase/firestore';
 
@@ -45,7 +45,6 @@ import { getFirestore, doc, setDoc, collection, onSnapshot } from 'firebase/fire
 const START_DATE = new Date('2026-06-15');
 const END_DATE = new Date('2026-08-13');
 
-// Helper to generate full calendar array
 const generateDateRange = (start, end) => {
   const dates = [];
   let curr = new Date(start);
@@ -88,52 +87,53 @@ const isSportsCampDay = (date) => {
   return (isWeek1 || isWeek2) && (day >= 1 && day <= 5);
 };
 
+// Static default classes if no custom live ones exist yet
 const ACADEMIC_CLASSES = {
   '2026-06-15': [
-    { name: 'Science', time: '3:00–4:00 pm' },
-    { name: 'Maths', time: '4:00–5:00 pm' }
+    { id: 'def-1', name: 'Science', time: '3:00–4:00 pm' },
+    { id: 'def-2', name: 'Maths', time: '4:00–5:00 pm' }
   ],
   '2026-06-17': [
-    { name: 'English', time: '3:00–4:00 pm' }
+    { id: 'def-3', name: 'English', time: '3:00–4:00 pm' }
   ],
   '2026-06-22': [
-    { name: 'Science', time: '3:00–4:00 pm' },
-    { name: 'Maths', time: '4:00–5:00 pm' }
+    { id: 'def-4', name: 'Science', time: '3:00–4:00 pm' },
+    { id: 'def-5', name: 'Maths', time: '4:00–5:00 pm' }
   ],
   '2026-06-24': [
-    { name: 'English', time: '3:00–4:00 pm' },
-    { name: 'Science', time: '4:00–5:00 pm' }
+    { id: 'def-6', name: 'English', time: '3:00–4:00 pm' },
+    { id: 'def-7', name: 'Science', time: '4:00–5:00 pm' }
   ],
   '2026-07-13': [
-    { name: 'Science', time: '3:00–4:00 pm' },
-    { name: 'Maths', time: '4:00–5:00 pm' }
+    { id: 'def-8', name: 'Science', time: '3:00–4:00 pm' },
+    { id: 'def-9', name: 'Maths', time: '4:00–5:00 pm' }
   ],
   '2026-07-15': [
-    { name: 'Science', time: '11:00 am–12:00 nn', conflict: true },
-    { name: 'English', time: '12:00–1:00 pm', conflict: true }
+    { id: 'def-10', name: 'Science', time: '11:00 am–12:00 nn', conflict: true },
+    { id: 'def-11', name: 'English', time: '12:00–1:00 pm', conflict: true }
   ],
   '2026-07-20': [
-    { name: 'Science', time: '3:00–4:00 pm' }
+    { id: 'def-12', name: 'Science', time: '3:00–4:00 pm' }
   ],
   '2026-07-22': [
-    { name: 'Science', time: '11:00 am–12:00 nn', conflict: true },
-    { name: 'English', time: '3:00–4:00 pm' }
+    { id: 'def-13', name: 'Science', time: '11:00 am–12:00 nn', conflict: true },
+    { id: 'def-14', name: 'English', time: '3:00–4:00 pm' }
   ],
   '2026-07-27': [
-    { name: 'Science', time: '3:00–4:00 pm' },
-    { name: 'Maths', time: '4:00–5:00 pm' }
+    { id: 'def-15', name: 'Science', time: '3:00–4:00 pm' },
+    { id: 'def-16', name: 'Maths', time: '4:00–5:00 pm' }
   ],
   '2026-07-29': [
-    { name: 'Science', time: '11:00 am–12:00 nn' },
-    { name: 'English', time: '12:00–1:00 pm' }
+    { id: 'def-17', name: 'Science', time: '11:00 am–12:00 nn' },
+    { id: 'def-18', name: 'English', time: '12:00–1:00 pm' }
   ],
   '2026-08-10': [
-    { name: 'Science', time: '3:00–4:00 pm' },
-    { name: 'Maths', time: '4:00–5:00 pm' }
+    { id: 'def-19', name: 'Science', time: '3:00–4:00 pm' },
+    { id: 'def-20', name: 'Maths', time: '4:00–5:00 pm' }
   ],
   '2026-08-12': [
-    { name: 'English', time: '3:00–4:00 pm' },
-    { name: 'Science', time: '4:00–5:00 pm' }
+    { id: 'def-21', name: 'English', time: '3:00–4:00 pm' },
+    { id: 'def-22', name: 'Science', time: '4:00–5:00 pm' }
   ]
 };
 
@@ -164,15 +164,62 @@ const DEFAULT_TASKS = [
   { id: 'olympiad', label: 'Olympiad Math Challenge 🧠', detail: 'Challenge your brain with hard questions.', category: 'intellect' },
 ];
 
-// --- INITIALIZE FIREBASE FROM DYNAMIC ENVS ---
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'aiden-summer-2026';
+// --- SAFE FIREBASE INITIALIZER WITH DEFAULTS ---
+const getFirebaseSetup = () => {
+  let config = null;
+  let customToken = '';
+  let id = 'aiden-summer-2026';
+
+  try {
+    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+      config = JSON.parse(__firebase_config);
+    }
+    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+      customToken = __initial_auth_token;
+    }
+    if (typeof __app_id !== 'undefined' && __app_id) {
+      id = __app_id;
+    }
+  } catch (e) {
+    console.warn("Global configs not injected yet. Using fallback mode.", e);
+  }
+
+  // --- PLACEHOLDER CONFIGURATION FOR LOCAL/VERCEL RUNS ---
+  // To use your own permanent Firebase, replace the keys below with yours:
+  if (!config) {
+    config = {
+      apiKey: "",
+      authDomain: "",
+      projectId: "",
+      storageBucket: "",
+      messagingSenderId: "",
+      appId: ""
+    };
+  }
+
+  return { config, customToken, id };
+};
+
+const { config: fbConfig, customToken: initialToken, id: appId } = getFirebaseSetup();
+
+// Initialize app only if a valid apiKey is configured
+const isFirebaseReady = fbConfig && fbConfig.apiKey !== "";
+let appInstance = null;
+let auth = null;
+let db = null;
+
+if (isFirebaseReady) {
+  try {
+    appInstance = initializeApp(fbConfig);
+    auth = getAuth(appInstance);
+    db = getFirestore(appInstance);
+  } catch (err) {
+    console.error("Firebase setup failed:", err);
+  }
+}
 
 // --- GEMINI API INTEGRATION ---
-const apiKey = ""; // Runtime injected
+const apiKey = ""; // Runtime injected or replace with yours from Google AI Studio
 
 const fetchWithRetry = async (url, options, retries = 5) => {
   const delays = [1000, 2000, 4000, 8000, 16000];
@@ -189,6 +236,9 @@ const fetchWithRetry = async (url, options, retries = 5) => {
 };
 
 const generateGeminiText = async (prompt) => {
+  if (!apiKey) {
+    throw new Error("Please insert your Gemini API Key in the codebase to run AI features!");
+  }
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
   const options = {
     method: 'POST',
@@ -202,46 +252,49 @@ const generateGeminiText = async (prompt) => {
 };
 
 export default function App() {
-  const [role, setRole] = useState('aiden'); // 'aiden' or 'parent'
+  const [role, setRole] = useState('aiden'); 
   const [user, setUser] = useState(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAuthLoading, setIsAuthLoading] = useState(isFirebaseReady);
   
   const [selectedDate, setSelectedDate] = useState(new Date('2026-06-15'));
   const [compareDateKey, setCompareDateKey] = useState('');
   const [parentReminderInput, setParentReminderInput] = useState('');
   const [discretionaryReasonInput, setDiscretionaryReasonInput] = useState('');
-  
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
 
-  // Editable Schedule state
+  // Editable Daily Schedule
   const [newEventName, setNewEventName] = useState('');
   const [newEventTime, setNewEventTime] = useState('');
   const [isAddingEvent, setIsAddingEvent] = useState(false);
 
-  // --- GEMINI API STATE ---
+  // Gemini API States
   const [isDraftingPraise, setIsDraftingPraise] = useState(false);
   const [praiseError, setPraiseError] = useState('');
   const [projectInterest, setProjectInterest] = useState('');
   const [projectIdea, setProjectIdea] = useState('');
   const [isGeneratingIdea, setIsGeneratingIdea] = useState(false);
 
-  // Firestore-driven real-time states
+  // Fallback states for non-Firebase environments
   const [daysState, setDaysState] = useState({});
   const [booksState, setBooksState] = useState({ count: 0, titles: ['', '', '', ''] });
 
   const timelineRef = useRef(null);
 
-  // --- RULE 3: AUTH FIRST & EXPLICIT ERROR ON TIMEOUT ---
+  // --- RULE 3: AUTH LOGS FOR LIVE DATABASE ---
   useEffect(() => {
+    if (!isFirebaseReady || !auth) {
+      setIsAuthLoading(false);
+      return;
+    }
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+        if (initialToken) {
+          await signInWithCustomToken(auth, initialToken);
         } else {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Firebase Authentication failed:", err);
+        console.error("Firebase Auth initialization failed:", err);
       } finally {
         setIsAuthLoading(false);
       }
@@ -251,11 +304,10 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- RULE 1: STRICT PATHS & RULE 3: AUTH GUARDS ON SNAPSHOTS ---
+  // --- RULE 1: REAL-TIME COLLABORATIVE SYNC ---
   useEffect(() => {
-    if (!user) return;
+    if (!isFirebaseReady || !user || !db) return;
 
-    // Listen to days state collection (Public shared data path)
     const daysCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'days');
     const unsubscribeDays = onSnapshot(
       daysCollectionRef,
@@ -267,11 +319,10 @@ export default function App() {
         setDaysState(loadedDays);
       },
       (error) => {
-        console.error("Error reading days collection snapshot:", error);
+        console.error("Firestore loading error:", error);
       }
     );
 
-    // Listen to milestone books progress document
     const booksDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'books', 'milestones');
     const unsubscribeBooks = onSnapshot(
       booksDocRef,
@@ -281,7 +332,7 @@ export default function App() {
         }
       },
       (error) => {
-        console.error("Error reading books milestones snapshot:", error);
+        console.error("Firestore loading error for books:", error);
       }
     );
 
@@ -301,16 +352,18 @@ export default function App() {
     skincarePhoto: '',
     parentReminder: '',
     discretionaryPoints: 0,
-    discretionaryReason: '',
-    // Note: schedule is left undefined so getDayEvents logic can apply defaults
+    discretionaryReason: ''
   };
 
-  // Safe fetch of appreciations list
   const appreciationsList = currentDayData.appreciations || Array(10).fill('');
 
   // --- DATABASE HELPERS ---
   const saveDayState = async (key, updatedData) => {
-    if (!user) return;
+    // If Firebase isn't set up, we keep updates in local memory
+    if (!isFirebaseReady || !user || !db) {
+      setDaysState(prev => ({ ...prev, [key]: updatedData }));
+      return;
+    }
     try {
       const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'days', key);
       await setDoc(docRef, updatedData, { merge: true });
@@ -320,7 +373,10 @@ export default function App() {
   };
 
   const saveBooksState = async (updatedBooks) => {
-    if (!user) return;
+    if (!isFirebaseReady || !user || !db) {
+      setBooksState(updatedBooks);
+      return;
+    }
     try {
       const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'books', 'milestones');
       await setDoc(docRef, updatedBooks);
@@ -329,85 +385,11 @@ export default function App() {
     }
   };
 
-  // POINT CALCULATOR FUNCTION FOR A SINGLE DAY
-  const calculatePointsForDay = (dayKey) => {
-    const dayData = daysState[dayKey];
-    if (!dayData) return { base: 0, bonus: 0, discretionary: 0, total: 0 };
-
-    const completedTasksCount = Object.values(dayData.completed || {}).filter(Boolean).length;
-    const totalTasks = DEFAULT_TASKS.length; // 9
-    const completionPercentage = completedTasksCount / totalTasks;
-
-    let basePoints = 0;
-    if (completionPercentage >= 0.5) {
-      if (completedTasksCount === 5) basePoints = 2;
-      else if (completedTasksCount === 6) basePoints = 4;
-      else if (completedTasksCount === 7) basePoints = 6;
-      else if (completedTasksCount === 8) basePoints = 8;
-      else if (completedTasksCount === 9) basePoints = 10;
-    }
-
-    let bonusPoints = 0;
-    const filledAppreciations = (dayData.appreciations || []).filter(item => item.trim() !== '').length;
-    if (filledAppreciations === 10) {
-      bonusPoints += 3;
-    }
-
-    if (dayData.skincarePhoto && dayData.skincarePhoto.trim() !== '') {
-      bonusPoints += 1;
-    }
-
-    const discretionary = dayData.discretionaryPoints || 0;
-
-    return {
-      base: basePoints,
-      bonus: bonusPoints,
-      discretionary,
-      total: basePoints + bonusPoints + discretionary
-    };
-  };
-
-  // Calculate Cumulative Lifetime Points
-  const calculateTotalPoints = () => {
-    return Object.keys(daysState).reduce((acc, key) => {
-      const dayPoints = calculatePointsForDay(key);
-      return acc + dayPoints.total;
-    }, 0);
-  };
-
-  const cumulativePoints = calculateTotalPoints();
-
-  // Determine Level of Achievement
-  const getLevelInfo = (points) => {
-    if (points >= 300) return { title: '👑 Summer Champion', color: 'text-purple-600', bg: 'bg-purple-100', nextAt: 'MAX' };
-    if (points >= 150) return { title: '🌟 Elite Trailblazer', color: 'text-blue-600', bg: 'bg-blue-100', nextAt: 300 };
-    if (points >= 75) return { title: '🔥 Daily Ranger', color: 'text-rose-600', bg: 'bg-rose-100', nextAt: 150 };
-    if (points >= 30) return { title: '⚡ Keen Learner', color: 'text-amber-600', bg: 'bg-amber-100', nextAt: 75 };
-    return { title: '🌱 Fresh Adventurer', color: 'text-emerald-600', bg: 'bg-emerald-100', nextAt: 30 };
-  };
-
-  const levelInfo = getLevelInfo(cumulativePoints);
-
-  const handleTaskToggle = (taskId) => {
-    const completed = { ...currentDayData.completed };
-    completed[taskId] = !completed[taskId];
-    
-    const updated = {
-      ...currentDayData,
-      completed
-    };
-    
-    setDaysState(prev => ({ ...prev, [dateKey]: updated }));
-    saveDayState(dateKey, updated);
-  };
-
-  // --- SCHEDULE CRUD HANDLERS ---
   const getDayEvents = (dayKey) => {
     const stored = daysState[dayKey]?.schedule;
     if (stored !== undefined) return stored;
-    // Fallback to initial constants if nothing is explicitly stored
     const defaultEvents = ACADEMIC_CLASSES[dayKey] || [];
-    return defaultEvents.map((e, idx) => ({ ...e, id: `default-${dayKey}-${idx}` }));
+    return defaultEvents;
   };
 
   const handleAddScheduleEvent = () => {
@@ -439,21 +421,84 @@ export default function App() {
     saveDayState(dateKey, updated);
   };
 
+  // POINT CALCULATOR FUNCTION
+  const calculatePointsForDay = (dayKey) => {
+    const dayData = daysState[dayKey];
+    if (!dayData) return { base: 0, bonus: 0, discretionary: 0, total: 0 };
 
-  const handleMoodSelect = (mood) => {
+    const completedTasksCount = Object.values(dayData.completed || {}).filter(Boolean).length;
+    const totalTasks = DEFAULT_TASKS.length; 
+    const completionPercentage = completedTasksCount / totalTasks;
+
+    let basePoints = 0;
+    if (completionPercentage >= 0.5) {
+      if (completedTasksCount === 5) basePoints = 2;
+      else if (completedTasksCount === 6) basePoints = 4;
+      else if (completedTasksCount === 7) basePoints = 6;
+      else if (completedTasksCount === 8) basePoints = 8;
+      else if (completedTasksCount === 9) basePoints = 10;
+    }
+
+    let bonusPoints = 0;
+    const filledAppreciations = (dayData.appreciations || []).filter(item => item.trim() !== '').length;
+    if (filledAppreciations === 10) {
+      bonusPoints += 3;
+    }
+
+    if (dayData.skincarePhoto && dayData.skincarePhoto.trim() !== '') {
+      bonusPoints += 1;
+    }
+
+    const discretionary = dayData.discretionaryPoints || 0;
+
+    return {
+      base: basePoints,
+      bonus: bonusPoints,
+      discretionary,
+      total: basePoints + bonusPoints + discretionary
+    };
+  };
+
+  const calculateTotalPoints = () => {
+    return Object.keys(daysState).reduce((acc, key) => {
+      const dayPoints = calculatePointsForDay(key);
+      return acc + dayPoints.total;
+    }, 0);
+  };
+
+  const cumulativePoints = calculateTotalPoints();
+
+  const getLevelInfo = (points) => {
+    if (points >= 300) return { title: '👑 Summer Champion', color: 'text-purple-600', bg: 'bg-purple-100', nextAt: 'MAX' };
+    if (points >= 150) return { title: '🌟 Elite Trailblazer', color: 'text-blue-600', bg: 'bg-blue-100', nextAt: 300 };
+    if (points >= 75) return { title: '🔥 Daily Ranger', color: 'text-rose-600', bg: 'bg-rose-100', nextAt: 150 };
+    if (points >= 30) return { title: '⚡ Keen Learner', color: 'text-amber-600', bg: 'bg-amber-100', nextAt: 75 };
+    return { title: '🌱 Fresh Adventurer', color: 'text-emerald-600', bg: 'bg-emerald-100', nextAt: 30 };
+  };
+
+  const levelInfo = getLevelInfo(cumulativePoints);
+
+  const handleTaskToggle = (taskId) => {
+    const completed = { ...currentDayData.completed };
+    completed[taskId] = !completed[taskId];
+    
     const updated = {
       ...currentDayData,
-      mood
+      completed
     };
+    
+    setDaysState(prev => ({ ...prev, [dateKey]: updated }));
+    saveDayState(dateKey, updated);
+  };
+
+  const handleMoodSelect = (mood) => {
+    const updated = { ...currentDayData, mood };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
 
   const handleCommentaryChange = (text) => {
-    const updated = {
-      ...currentDayData,
-      commentary: text
-    };
+    const updated = { ...currentDayData, commentary: text };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
@@ -470,7 +515,6 @@ export default function App() {
     saveDayState(dateKey, updated);
   };
 
-  // Compressed Image capture handler
   const handlePhotoUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -517,19 +561,13 @@ export default function App() {
   };
 
   const handleDeletePhoto = () => {
-    const updated = {
-      ...currentDayData,
-      skincarePhoto: ''
-    };
+    const updated = { ...currentDayData, skincarePhoto: '' };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
 
   const handleParentCommentChange = (text) => {
-    const updated = {
-      ...currentDayData,
-      parentComment: text
-    };
+    const updated = { ...currentDayData, parentComment: text };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
@@ -546,10 +584,7 @@ export default function App() {
   };
 
   const handleClearReminder = () => {
-    const updated = {
-      ...currentDayData,
-      parentReminder: ''
-    };
+    const updated = { ...currentDayData, parentReminder: '' };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
@@ -588,6 +623,10 @@ export default function App() {
 
   // --- GEMINI HANDLERS ---
   const handleDraftPraise = async () => {
+    if (!apiKey) {
+      setPraiseError("To use AI, please set your Gemini API key inside the app.tsx code!");
+      return;
+    }
     setIsDraftingPraise(true);
     setPraiseError('');
     try {
@@ -596,13 +635,13 @@ export default function App() {
       const aidenComment = currentDayData.commentary || 'None';
       const appreciations = (currentDayData.appreciations || []).filter(a => a.trim() !== '').join(', ') || 'None';
 
-      const prompt = `You are a loving, encouraging parent. Your son Aiden is doing a summer quest. Today he completed ${completedCount} out of 9 tasks. His mood today is "${mood}". His daily commentary is: "${aidenComment}". His appreciations today: "${appreciations}". Write a short (2-4 sentences), warm, and encouraging note to him praising his specific efforts today and giving him a little tip or hype for tomorrow. Keep it natural, highly positive, and write from the perspective of his parent addressing him directly.`;
+      const prompt = `You are a loving, encouraging parent. Your son Aiden is doing a summer quest. Today he completed ${completedCount} out of 9 tasks. His mood today is "${mood}". His daily commentary is: "${aidenComment}". His appreciations today: "${appreciations}". Write a short (2-4 sentences), warm, and encouraging note to him praising his specific efforts today and giving him a little tip or hype for tomorrow. Keep it natural, highly positive, and write from the perspective of his parent addressing him directly. Do not include markdown.`;
 
       const text = await generateGeminiText(prompt);
       handleParentCommentChange(text);
     } catch (err) {
       console.error(err);
-      setPraiseError('Could not connect to AI. Please try again.');
+      setPraiseError('Could not connect to Gemini API. Check your key.');
     } finally {
       setIsDraftingPraise(false);
     }
@@ -610,6 +649,10 @@ export default function App() {
 
   const handleGenerateProject = async () => {
     if (!projectInterest.trim()) return;
+    if (!apiKey) {
+      setProjectIdea("Gemini API Key missing in app.tsx code. To run, add your key inside the code!");
+      return;
+    }
     setIsGeneratingIdea(true);
     setProjectIdea('');
     try {
@@ -682,7 +725,6 @@ export default function App() {
 
   const currentPointsSummary = calculatePointsForDay(dateKey);
 
-  // Loading indicator for database connection initialization
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white p-6">
@@ -767,6 +809,18 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* Warning banner if running on default local fallbacks */}
+      {!isFirebaseReady && (
+        <div className="max-w-6xl mx-auto px-4 mt-4">
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3.5 rounded-xl text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span><strong>Local Storage Active:</strong> Connect your personal Firebase Config in the `app.tsx` file for real-time saving and sync on mobile!</span>
+            </span>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
 
@@ -986,7 +1040,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Conflict Warning */}
               {isSportsCampDay(selectedDate) && activeAcademics.some(c => c.conflict) && (
                 <div className="mt-4 p-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl flex gap-3">
                   <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
@@ -1005,7 +1058,7 @@ export default function App() {
                   <div>
                     <h4 className="font-bold text-sm">Vacation Mode Active 🌴</h4>
                     <p className="text-xs text-blue-800 leading-relaxed mt-1">
-                      Daily routines (piano, reading, pushups) are optional or modified during vacation. Take it easy and enjoy the family trip!
+                      Daily routines are optional or modified during vacation. Enjoy the family trip!
                     </p>
                   </div>
                 </div>
@@ -1103,7 +1156,6 @@ export default function App() {
                 {DEFAULT_TASKS.map((task) => {
                   const isChecked = !!currentDayData.completed?.[task.id];
                   
-                  // Color tags based on task category
                   let catBadge = "bg-slate-100 text-slate-600";
                   if (task.category === 'music') catBadge = "bg-indigo-50 text-indigo-600 border border-indigo-100";
                   if (task.category === 'fitness') catBadge = "bg-rose-50 text-rose-600 border border-rose-100";
@@ -1175,7 +1227,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Progress bar */}
               <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mb-5">
                 <div 
                   className="bg-gradient-to-r from-pink-500 to-rose-500 h-full transition-all duration-500"
@@ -1246,7 +1297,7 @@ export default function App() {
                 </div>
 
                 {projectIdea && (
-                  <div className="bg-white/80 p-4 rounded-xl border border-indigo-100 text-sm text-indigo-900 whitespace-pre-wrap leading-relaxed shadow-inner relative z-10">
+                  <div className="bg-white/80 p-4 rounded-xl border border-indigo-100 text-sm text-indigo-900 whitespace-pre-wrap leading-relaxed shadow-inner relative z-10 animate-in fade-in zoom-in-95">
                     {projectIdea}
                   </div>
                 )}
@@ -1284,7 +1335,7 @@ export default function App() {
                     />
                     <button
                       onClick={handleSendReminder}
-                      className="bg-indigo-500 hover:bg-indigo-600 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all active:scale-95"
+                      className="bg-indigo-50 hover:bg-indigo-600 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all active:scale-95"
                     >
                       <Send className="w-3.5 h-3.5" />
                       Set
@@ -1339,7 +1390,7 @@ export default function App() {
                   </div>
 
                   {currentDayData.discretionaryPoints > 0 && (
-                    <div className="bg-emerald-500/20 text-emerald-300 p-2.5 rounded-xl text-[10px] mt-2 border border-emerald-500/30">
+                    <div className="bg-emerald-500/20 text-emerald-300 p-2.5 rounded-xl text-[10px] mt-2 border border-emerald-500/30 animate-in fade-in zoom-in-95">
                       <strong>+{currentDayData.discretionaryPoints} Points Awarded!</strong>
                       <p className="italic text-[9px] text-emerald-400 mt-0.5">"{currentDayData.discretionaryReason}"</p>
                     </div>
@@ -1378,7 +1429,6 @@ export default function App() {
                           <span className="text-[10px] font-bold text-slate-600 block">{day.dateLabel}</span>
                         </div>
                         
-                        {/* Completion scale */}
                         <div className="flex-1 flex items-center gap-2">
                           <div className="flex-1 bg-slate-200 h-1.5 rounded-full overflow-hidden">
                             <div 
@@ -1389,7 +1439,6 @@ export default function App() {
                           <span className="text-[10px] font-bold text-slate-500 w-8">{day.completedCount}/9</span>
                         </div>
 
-                        {/* Mood & Points indicators */}
                         <div className="flex items-center gap-2 w-14 justify-end">
                           <span className="text-sm" title={`Mood: ${day.mood || 'Unlogged'}`}>{moodEmoji}</span>
                           <span className="text-[10px] bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded font-extrabold">{day.totalPoints}xp</span>
@@ -1413,7 +1462,6 @@ export default function App() {
                 Take or upload a daily photo to track acne recovery. (+1 overachievement bonus point!)
               </p>
 
-              {/* Today's Photo Box / Compare View Side-By-Side */}
               <div className="grid grid-cols-2 gap-4">
                 
                 {/* LHS: Today's Photo Box */}
@@ -1489,7 +1537,7 @@ export default function App() {
                       ) : (
                         <div className="aspect-square border-dashed border border-slate-100 rounded-xl flex items-center justify-center p-3 text-center bg-slate-50/20 text-slate-300">
                           <Columns className="w-6 h-6 mb-1" />
-                          <span className="text-[9px] font-bold leading-tight">Select date above to compare</span>
+                          <span className="text-[9px] font-bold leading-tight animate-pulse">Select date above to compare</span>
                         </div>
                       )}
                     </div>
@@ -1643,7 +1691,6 @@ export default function App() {
 
             <div className="p-6 space-y-6 text-sm">
               
-              {/* Point Allocation Rules */}
               <div className="space-y-3">
                 <h4 className="font-extrabold text-indigo-900 border-b pb-1 flex items-center gap-1.5">
                   <CheckSquare className="w-4 h-4 text-indigo-600" />
@@ -1680,7 +1727,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Overachievement Bonuses */}
               <div className="space-y-3">
                 <h4 className="font-extrabold text-indigo-900 border-b pb-1 flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-pink-500" />
@@ -1702,7 +1748,6 @@ export default function App() {
                 </ul>
               </div>
 
-              {/* Parental Discretionary points */}
               <div className="space-y-2">
                 <h4 className="font-extrabold text-indigo-900 border-b pb-1 flex items-center gap-1.5">
                   <Users className="w-4 h-4 text-indigo-500" />
@@ -1713,7 +1758,6 @@ export default function App() {
                 </p>
               </div>
 
-              {/* Levels milestones table */}
               <div className="space-y-3 pt-2">
                 <h4 className="font-extrabold text-indigo-900 border-b pb-1 flex items-center gap-1.5">
                   <Award className="w-4 h-4 text-yellow-500" />
@@ -1747,7 +1791,7 @@ export default function App() {
 
             <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center rounded-b-2xl">
               <span className="text-[10px] text-slate-400 font-mono select-all">
-                Sync ID: {user?.uid}
+                Sync ID: {user?.uid || 'Local Mode'}
               </span>
               <button 
                 onClick={() => setIsRulesModalOpen(false)}
@@ -1766,3 +1810,4 @@ export default function App() {
       </footer>
     </div>
   );
+}
