@@ -17,7 +17,6 @@ import {
   Coffee,
   CheckSquare,
   TrendingUp,
-  Flame,
   Plus,
   Trash2,
   Info,
@@ -27,7 +26,6 @@ import {
   Columns,
   Send,
   Zap,
-  ThumbsUp,
   X,
   Bell,
   RefreshCw,
@@ -37,16 +35,48 @@ import {
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, collection, onSnapshot } from 'firebase/firestore';
+import { initializeApp, FirebaseApp } from 'firebase/app';
+import { getAuth, Auth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { getFirestore, Firestore, doc, setDoc, collection, onSnapshot } from 'firebase/firestore';
+
+// --- TYPES & INTERFACES ---
+interface ScheduleEvent {
+  id: string;
+  name: string;
+  time: string;
+  conflict?: boolean;
+}
+
+interface DayData {
+  completed: Record<string, boolean>;
+  mood: string;
+  commentary: string;
+  parentComment: string;
+  appreciations: string[];
+  skincarePhoto: string;
+  parentReminder: string;
+  discretionaryPoints: number;
+  discretionaryReason: string;
+  schedule?: ScheduleEvent[];
+}
+
+interface BooksData {
+  count: number;
+  titles: string[];
+}
+
+interface SpecialEvent {
+  type: 'vacation' | 'tkd' | 'sports';
+  name: string;
+  color: string;
+}
 
 // --- CONFIGURATION & TIME CONSTANTS ---
 const START_DATE = new Date('2026-06-15');
 const END_DATE = new Date('2026-08-13');
 
-const generateDateRange = (start, end) => {
-  const dates = [];
+const generateDateRange = (start: Date, end: Date): Date[] => {
+  const dates: Date[] = [];
   let curr = new Date(start);
   while (curr <= end) {
     dates.push(new Date(curr));
@@ -57,15 +87,15 @@ const generateDateRange = (start, end) => {
 
 const ALL_DATES = generateDateRange(START_DATE, END_DATE);
 
-const formatDateKey = (date) => {
+const formatDateKey = (date: Date): string => {
   return date.toISOString().split('T')[0];
 };
 
-const getDayName = (date) => {
+const getDayName = (date: Date): string => {
   return date.toLocaleDateString('en-US', { weekday: 'short' });
 };
 
-const getFormattedDateLabel = (date) => {
+const getFormattedDateLabel = (date: Date): string => {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
@@ -73,7 +103,7 @@ const getFormattedDateLabel = (date) => {
 const FAMILY_VACATION = { start: new Date('2026-06-25'), end: new Date('2026-07-10') };
 const TKD_CAMP = { start: new Date('2026-08-02'), end: new Date('2026-08-09') };
 
-const isSportsCampDay = (date) => {
+const isSportsCampDay = (date: Date): boolean => {
   const day = date.getDay(); 
   const time = date.getTime();
   const week1Start = new Date('2026-07-13').getTime();
@@ -88,7 +118,7 @@ const isSportsCampDay = (date) => {
 };
 
 // Static default classes if no custom live ones exist yet
-const ACADEMIC_CLASSES = {
+const ACADEMIC_CLASSES: Record<string, ScheduleEvent[]> = {
   '2026-06-15': [
     { id: 'def-1', name: 'Science', time: '3:00–4:00 pm' },
     { id: 'def-2', name: 'Maths', time: '4:00–5:00 pm' }
@@ -137,7 +167,7 @@ const ACADEMIC_CLASSES = {
   ]
 };
 
-const getDaySpecialEvent = (date) => {
+const getDaySpecialEvent = (date: Date): SpecialEvent | null => {
   const time = date.getTime();
   if (time >= FAMILY_VACATION.start.getTime() && time <= FAMILY_VACATION.end.getTime() + 86400000) {
     return { type: 'vacation', name: 'Family Vacation 🏖️', color: 'bg-amber-100 text-amber-800 border-amber-200' };
@@ -166,26 +196,24 @@ const DEFAULT_TASKS = [
 
 // --- SAFE FIREBASE INITIALIZER WITH DEFAULTS ---
 const getFirebaseSetup = () => {
-  let config = null;
+  let config: Record<string, string> | null = null;
   let customToken = '';
   let id = 'aiden-summer-2026';
 
   try {
-    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-      config = JSON.parse(__firebase_config);
+    if (typeof (window as any).__firebase_config !== 'undefined' && (window as any).__firebase_config) {
+      config = JSON.parse((window as any).__firebase_config);
     }
-    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-      customToken = __initial_auth_token;
+    if (typeof (window as any).__initial_auth_token !== 'undefined' && (window as any).__initial_auth_token) {
+      customToken = (window as any).__initial_auth_token;
     }
-    if (typeof __app_id !== 'undefined' && __app_id) {
-      id = __app_id;
+    if (typeof (window as any).__app_id !== 'undefined' && (window as any).__app_id) {
+      id = (window as any).__app_id;
     }
   } catch (e) {
     console.warn("Global configs not injected yet. Using fallback mode.", e);
   }
 
-  // --- PLACEHOLDER CONFIGURATION FOR LOCAL/VERCEL RUNS ---
-  // To use your own permanent Firebase, replace the keys below with yours:
   if (!config) {
     config = {
       apiKey: "",
@@ -204,9 +232,9 @@ const { config: fbConfig, customToken: initialToken, id: appId } = getFirebaseSe
 
 // Initialize app only if a valid apiKey is configured
 const isFirebaseReady = fbConfig && fbConfig.apiKey !== "";
-let appInstance = null;
-let auth = null;
-let db = null;
+let appInstance: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
 
 if (isFirebaseReady) {
   try {
@@ -221,7 +249,7 @@ if (isFirebaseReady) {
 // --- GEMINI API INTEGRATION ---
 const apiKey = ""; // Runtime injected or replace with yours from Google AI Studio
 
-const fetchWithRetry = async (url, options, retries = 5) => {
+const fetchWithRetry = async (url: string, options: RequestInit, retries: number = 5): Promise<any> => {
   const delays = [1000, 2000, 4000, 8000, 16000];
   for (let i = 0; i < retries; i++) {
     try {
@@ -235,12 +263,12 @@ const fetchWithRetry = async (url, options, retries = 5) => {
   }
 };
 
-const generateGeminiText = async (prompt) => {
+const generateGeminiText = async (prompt: string): Promise<string> => {
   if (!apiKey) {
     throw new Error("Please insert your Gemini API Key in the codebase to run AI features!");
   }
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-  const options = {
+  const options: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -252,33 +280,33 @@ const generateGeminiText = async (prompt) => {
 };
 
 export default function App() {
-  const [role, setRole] = useState('aiden'); 
-  const [user, setUser] = useState(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(isFirebaseReady);
+  const [role, setRole] = useState<'aiden' | 'parent'>('aiden'); 
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(isFirebaseReady);
   
-  const [selectedDate, setSelectedDate] = useState(new Date('2026-06-15'));
-  const [compareDateKey, setCompareDateKey] = useState('');
-  const [parentReminderInput, setParentReminderInput] = useState('');
-  const [discretionaryReasonInput, setDiscretionaryReasonInput] = useState('');
-  const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date('2026-06-15'));
+  const [compareDateKey, setCompareDateKey] = useState<string>('');
+  const [parentReminderInput, setParentReminderInput] = useState<string>('');
+  const [discretionaryReasonInput, setDiscretionaryReasonInput] = useState<string>('');
+  const [isRulesModalOpen, setIsRulesModalOpen] = useState<boolean>(false);
 
   // Editable Daily Schedule
-  const [newEventName, setNewEventName] = useState('');
-  const [newEventTime, setNewEventTime] = useState('');
-  const [isAddingEvent, setIsAddingEvent] = useState(false);
+  const [newEventName, setNewEventName] = useState<string>('');
+  const [newEventTime, setNewEventTime] = useState<string>('');
+  const [isAddingEvent, setIsAddingEvent] = useState<boolean>(false);
 
   // Gemini API States
-  const [isDraftingPraise, setIsDraftingPraise] = useState(false);
-  const [praiseError, setPraiseError] = useState('');
-  const [projectInterest, setProjectInterest] = useState('');
-  const [projectIdea, setProjectIdea] = useState('');
-  const [isGeneratingIdea, setIsGeneratingIdea] = useState(false);
+  const [isDraftingPraise, setIsDraftingPraise] = useState<boolean>(false);
+  const [praiseError, setPraiseError] = useState<string>('');
+  const [projectInterest, setProjectInterest] = useState<string>('');
+  const [projectIdea, setProjectIdea] = useState<string>('');
+  const [isGeneratingIdea, setIsGeneratingIdea] = useState<boolean>(false);
 
-  // Fallback states for non-Firebase environments
-  const [daysState, setDaysState] = useState({});
-  const [booksState, setBooksState] = useState({ count: 0, titles: ['', '', '', ''] });
+  // Real-time local & synced state map
+  const [daysState, setDaysState] = useState<Record<string, DayData>>({});
+  const [booksState, setBooksState] = useState<BooksData>({ count: 0, titles: ['', '', '', ''] });
 
-  const timelineRef = useRef(null);
+  const timelineRef = useRef<HTMLDivElement | null>(null);
 
   // --- RULE 3: AUTH LOGS FOR LIVE DATABASE ---
   useEffect(() => {
@@ -300,7 +328,7 @@ export default function App() {
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
     return () => unsubscribe();
   }, []);
 
@@ -312,9 +340,9 @@ export default function App() {
     const unsubscribeDays = onSnapshot(
       daysCollectionRef,
       (snapshot) => {
-        const loadedDays = {};
+        const loadedDays: Record<string, DayData> = {};
         snapshot.forEach((doc) => {
-          loadedDays[doc.id] = doc.data();
+          loadedDays[doc.id] = doc.data() as DayData;
         });
         setDaysState(loadedDays);
       },
@@ -328,7 +356,7 @@ export default function App() {
       booksDocRef,
       (snapshot) => {
         if (snapshot.exists()) {
-          setBooksState(snapshot.data());
+          setBooksState(snapshot.data() as BooksData);
         }
       },
       (error) => {
@@ -343,7 +371,7 @@ export default function App() {
   }, [user]);
 
   const dateKey = formatDateKey(selectedDate);
-  const currentDayData = daysState[dateKey] || {
+  const currentDayData: DayData = daysState[dateKey] || {
     completed: {},
     mood: '',
     commentary: '',
@@ -358,8 +386,7 @@ export default function App() {
   const appreciationsList = currentDayData.appreciations || Array(10).fill('');
 
   // --- DATABASE HELPERS ---
-  const saveDayState = async (key, updatedData) => {
-    // If Firebase isn't set up, we keep updates in local memory
+  const saveDayState = async (key: string, updatedData: DayData) => {
     if (!isFirebaseReady || !user || !db) {
       setDaysState(prev => ({ ...prev, [key]: updatedData }));
       return;
@@ -372,7 +399,7 @@ export default function App() {
     }
   };
 
-  const saveBooksState = async (updatedBooks) => {
+  const saveBooksState = async (updatedBooks: BooksData) => {
     if (!isFirebaseReady || !user || !db) {
       setBooksState(updatedBooks);
       return;
@@ -385,7 +412,7 @@ export default function App() {
     }
   };
 
-  const getDayEvents = (dayKey) => {
+  const getDayEvents = (dayKey: string): ScheduleEvent[] => {
     const stored = daysState[dayKey]?.schedule;
     if (stored !== undefined) return stored;
     const defaultEvents = ACADEMIC_CLASSES[dayKey] || [];
@@ -394,13 +421,13 @@ export default function App() {
 
   const handleAddScheduleEvent = () => {
     if (!newEventName.trim() || !newEventTime.trim()) return;
-    const newEvent = { 
+    const newEvent: ScheduleEvent = { 
       id: Date.now().toString() + Math.random().toString(36).substring(2), 
       name: newEventName, 
       time: newEventTime 
     };
     const currentSchedule = getDayEvents(dateKey);
-    const updated = {
+    const updated: DayData = {
       ...currentDayData,
       schedule: [...currentSchedule, newEvent]
     };
@@ -411,9 +438,9 @@ export default function App() {
     setIsAddingEvent(false);
   };
 
-  const handleDeleteScheduleEvent = (idToRemove) => {
+  const handleDeleteScheduleEvent = (idToRemove: string) => {
     const currentSchedule = getDayEvents(dateKey);
-    const updated = {
+    const updated: DayData = {
       ...currentDayData,
       schedule: currentSchedule.filter(e => e.id !== idToRemove)
     };
@@ -422,7 +449,7 @@ export default function App() {
   };
 
   // POINT CALCULATOR FUNCTION
-  const calculatePointsForDay = (dayKey) => {
+  const calculatePointsForDay = (dayKey: string) => {
     const dayData = daysState[dayKey];
     if (!dayData) return { base: 0, bonus: 0, discretionary: 0, total: 0 };
 
@@ -459,7 +486,7 @@ export default function App() {
     };
   };
 
-  const calculateTotalPoints = () => {
+  const calculateTotalPoints = (): number => {
     return Object.keys(daysState).reduce((acc, key) => {
       const dayPoints = calculatePointsForDay(key);
       return acc + dayPoints.total;
@@ -468,7 +495,7 @@ export default function App() {
 
   const cumulativePoints = calculateTotalPoints();
 
-  const getLevelInfo = (points) => {
+  const getLevelInfo = (points: number) => {
     if (points >= 300) return { title: '👑 Summer Champion', color: 'text-purple-600', bg: 'bg-purple-100', nextAt: 'MAX' };
     if (points >= 150) return { title: '🌟 Elite Trailblazer', color: 'text-blue-600', bg: 'bg-blue-100', nextAt: 300 };
     if (points >= 75) return { title: '🔥 Daily Ranger', color: 'text-rose-600', bg: 'bg-rose-100', nextAt: 150 };
@@ -478,11 +505,11 @@ export default function App() {
 
   const levelInfo = getLevelInfo(cumulativePoints);
 
-  const handleTaskToggle = (taskId) => {
+  const handleTaskToggle = (taskId: string) => {
     const completed = { ...currentDayData.completed };
     completed[taskId] = !completed[taskId];
     
-    const updated = {
+    const updated: DayData = {
       ...currentDayData,
       completed
     };
@@ -491,23 +518,23 @@ export default function App() {
     saveDayState(dateKey, updated);
   };
 
-  const handleMoodSelect = (mood) => {
-    const updated = { ...currentDayData, mood };
+  const handleMoodSelect = (mood: string) => {
+    const updated: DayData = { ...currentDayData, mood };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
 
-  const handleCommentaryChange = (text) => {
-    const updated = { ...currentDayData, commentary: text };
+  const handleCommentaryChange = (text: string) => {
+    const updated: DayData = { ...currentDayData, commentary: text };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
 
-  const handleAppreciationChange = (index, value) => {
+  const handleAppreciationChange = (index: number, value: string) => {
     const updatedAppreciations = [...appreciationsList];
     updatedAppreciations[index] = value;
     
-    const updated = {
+    const updated: DayData = {
       ...currentDayData,
       appreciations: updatedAppreciations
     };
@@ -515,8 +542,8 @@ export default function App() {
     saveDayState(dateKey, updated);
   };
 
-  const handlePhotoUpload = (e) => {
-    const file = e.target.files[0];
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
@@ -544,37 +571,41 @@ export default function App() {
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+        }
 
         const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
 
-        const updated = {
+        const updated: DayData = {
           ...currentDayData,
           skincarePhoto: compressedBase64
         };
         setDaysState(prev => ({ ...prev, [dateKey]: updated }));
         saveDayState(dateKey, updated);
       };
-      img.src = event.target.result;
+      if (event.target?.result) {
+        img.src = event.target.result as string;
+      }
     };
     reader.readAsDataURL(file);
   };
 
   const handleDeletePhoto = () => {
-    const updated = { ...currentDayData, skincarePhoto: '' };
+    const updated: DayData = { ...currentDayData, skincarePhoto: '' };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
 
-  const handleParentCommentChange = (text) => {
-    const updated = { ...currentDayData, parentComment: text };
+  const handleParentCommentChange = (text: string) => {
+    const updated: DayData = { ...currentDayData, parentComment: text };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
 
   const handleSendReminder = () => {
     if (!parentReminderInput.trim()) return;
-    const updated = {
+    const updated: DayData = {
       ...currentDayData,
       parentReminder: parentReminderInput
     };
@@ -584,14 +615,14 @@ export default function App() {
   };
 
   const handleClearReminder = () => {
-    const updated = { ...currentDayData, parentReminder: '' };
+    const updated: DayData = { ...currentDayData, parentReminder: '' };
     setDaysState(prev => ({ ...prev, [dateKey]: updated }));
     saveDayState(dateKey, updated);
   };
 
-  const handleAddDiscretionaryPoints = (points) => {
+  const handleAddDiscretionaryPoints = (points: number) => {
     const currentPoints = currentDayData.discretionaryPoints || 0;
-    const updated = {
+    const updated: DayData = {
       ...currentDayData,
       discretionaryPoints: currentPoints + points,
       discretionaryReason: discretionaryReasonInput || 'Superb effort & behavior today! 🌟'
@@ -602,7 +633,7 @@ export default function App() {
   };
 
   const handleClearDiscretionaryPoints = () => {
-    const updated = {
+    const updated: DayData = {
       ...currentDayData,
       discretionaryPoints: 0,
       discretionaryReason: ''
@@ -611,7 +642,7 @@ export default function App() {
     saveDayState(dateKey, updated);
   };
 
-  const handleBookChange = (index, value) => {
+  const handleBookChange = (index: number, value: string) => {
     const titles = [...booksState.titles];
     titles[index] = value;
     const count = titles.filter(t => t.trim() !== '').length;
@@ -667,13 +698,13 @@ export default function App() {
     }
   };
 
-  const getCompletedCountForDay = (dayKey) => {
+  const getCompletedCountForDay = (dayKey: string): number => {
     const data = daysState[dayKey];
     if (!data || !data.completed) return 0;
     return Object.values(data.completed).filter(Boolean).length;
   };
 
-  const getDatesWithPhotos = () => {
+  const getDatesWithPhotos = (): string[] => {
     return Object.keys(daysState).filter(
       key => daysState[key]?.skincarePhoto && key !== dateKey
     );
@@ -696,7 +727,7 @@ export default function App() {
   };
 
   const getLast7DaysStats = () => {
-    const stats = [];
+    const stats: { dateLabel: string; completedCount: number; mood: string; totalPoints: number }[] = [];
     const tempDate = new Date(selectedDate);
     for (let i = 0; i < 7; i++) {
       const key = formatDateKey(tempDate);
@@ -716,7 +747,7 @@ export default function App() {
 
   useEffect(() => {
     if (timelineRef.current) {
-      const activeBtn = timelineRef.current.querySelector('.active-date-btn');
+      const activeBtn = timelineRef.current.querySelector('.active-date-btn') as HTMLElement | null;
       if (activeBtn) {
         activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
       }
@@ -1542,7 +1573,7 @@ export default function App() {
                       )}
                     </div>
                   ) : (
-                    <div className="aspect-square border border-dashed border-slate-100 rounded-xl flex flex-col items-center justify-center p-3 text-center bg-slate-50/20 text-slate-300">
+                    <div className="aspect-square border-dashed border border-slate-100 rounded-xl flex flex-col items-center justify-center p-3 text-center bg-slate-50/20 text-slate-300">
                       <Info className="w-5 h-5 mb-1.5 text-slate-300" />
                       <span className="text-[9px] font-bold leading-tight text-slate-400 leading-relaxed">
                         Compare options appear once Aiden logs multiple photos!
@@ -1612,7 +1643,7 @@ export default function App() {
                   )}
                 </div>
                 <textarea
-                  rows="3"
+                  rows={3}
                   disabled={role !== 'aiden'}
                   placeholder="Aiden: Write down a note about what you did today, and what you liked!"
                   value={currentDayData.commentary || ''}
@@ -1654,7 +1685,7 @@ export default function App() {
                   )}
                 </div>
                 <textarea
-                  rows="3"
+                  rows={3}
                   disabled={role !== 'parent'}
                   placeholder="Leave words of praise for Aiden today! Well done or tip notes."
                   value={currentDayData.parentComment || ''}
